@@ -1,0 +1,89 @@
+name: devpilot
+
+services:
+  # pgvector/pgvector rather than plain postgres: the extension must exist in
+  # the image, and version-matching it to the server later is painful. Pinning
+  # the exact tag keeps local, CI, and production on identical index
+  # behaviour — pgvector's HNSW implementation changes between minor versions.
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: devpilot
+      POSTGRES_PASSWORD: devpilot
+      POSTGRES_DB: devpilot
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U devpilot -d devpilot"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  # Migrations run as a one-shot service, not from the API's entrypoint.
+  # Migrating on application startup races every other replica during a
+  # rolling deploy and couples "can serve traffic" to "can alter schema".
+  # A dedicated job that must exit 0 before the API starts is the same shape
+  # as a Kubernetes init container or a deploy-pipeline migration step.
+  migrate:
+    build:
+      context: ./backend
+      target: runtime
+    environment:
+      DEVPILOT_ENVIRONMENT: local
+      DEVPILOT_DATABASE_URL: postgresql+asyncpg://devpilot:devpilot@db:5432/devpilot
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+
+  api:
+    build:
+      context: ./backend
+      target: runtime
+    environment:
+      # The image installs devpilot into the venv's site-packages. The bind
+      # mount below would otherwise be ignored, since the installed copy wins.
+      # PYTHONPATH precedes site-packages on sys.path, so the mounted source
+      # shadows it and --reload has something to reload.
+      PYTHONPATH: /app/src
+      DEVPILOT_ENVIRONMENT: local
+      DEVPILOT_DEBUG: "true"
+      DEVPILOT_LOG_LEVEL: DEBUG
+      DEVPILOT_DATABASE_URL: postgresql+asyncpg://devpilot:devpilot@db:5432/devpilot
+      DEVPILOT_CORS_ORIGINS: '["http://localhost:5173"]'
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    # Source is mounted and reload is enabled for local development only. The
+    # image itself has no reloader and no bind mount in any other environment.
+    volumes:
+      - ./backend/src:/app/src:ro
+    command:
+      - uvicorn
+      - devpilot.main:create_app
+      - --factory
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --reload
+      - --reload-dir
+      - /app/src
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)\""]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  db_data:
