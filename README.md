@@ -72,6 +72,42 @@ Tear down, keeping data: `make down`. Discard the database volume too:
 
 ### Run the tests
 
+Two supported ways. Both run the identical suite.
+
+**In Docker** (nothing to install; this is the reproducible one):
+
+```bash
+make up                                # stack must be running
+docker compose exec api pytest         # == make test-docker
+```
+
+From cold, without a running stack — starts Postgres and migrations, runs the
+suite in a throwaway container, removes it:
+
+```bash
+docker compose run --rm api pytest     # == make test-docker-cold
+```
+
+Useful variations:
+
+```bash
+docker compose exec api pytest -m "not integration"   # skip tests needing Postgres
+docker compose exec api pytest -v                     # per-test names
+docker compose exec api pytest --cov=devpilot --cov-report=term-missing
+docker compose exec api pytest tests/unit/test_health.py::test_liveness_reports_ok
+```
+
+Test dependencies live in the **`dev`** image stage, not `runtime`. Compose
+builds `dev`; production and CI build `runtime`, which contains no pytest and
+no test code. After changing dependencies or the Dockerfile, rebuild:
+
+```bash
+make rebuild        # docker compose build --no-cache api
+make up
+```
+
+**On the host** (faster loop, needs local Python 3.12):
+
 ```bash
 cd backend
 python -m venv .venv && source .venv/bin/activate
@@ -116,6 +152,8 @@ no defaults for anything that would be a secret in production.
 | `/readyz` returns 503 | Postgres is not reachable. `docker compose ps db`, then `docker compose logs db`. |
 | `port is already allocated` | Something else holds 8000 or 5432. Change the host-side port in `docker-compose.yml`. |
 | `make test-integration` reports skips | No database at `DEVPILOT_DATABASE_URL`. Run `make up` first and export the DSN above. |
+| `exec: "pytest": executable file not found in $PATH` | The `api` container was built from the `runtime` target, which deliberately has no test dependencies. Run `make rebuild && make up` to rebuild it from the `dev` target. |
+| `ModuleNotFoundError: No module named 'tests'` | Running bare `pytest` from outside the project root. `pytest` only picks up `pythonpath` from `pyproject.toml` when run with the repo root as the working directory. |
 
 ## Roadmap
 
@@ -151,3 +189,10 @@ Unit tests stub the database; they are about HTTP behaviour. Integration tests
 use a real Postgres, because a mock cannot tell you that a migration failed to
 apply or that pgvector is missing. CI runs both against a `pgvector/pgvector:pg16`
 service, applies migrations, and verifies they are reversible.
+
+The image is built in three stages. `builder` carries compilers and build
+metadata. `runtime` carries neither and is what deploys — no pytest, no test
+code, 29 packages. `dev` layers the test dependencies and the suite on top of
+`runtime` (46 packages) and is what Compose builds locally. CI builds `runtime`
+separately, which is what keeps that separation honest: if a test dependency
+ever leaks into production, that job is where it surfaces.

@@ -104,3 +104,33 @@ jobs:
             -e DEVPILOT_DATABASE_URL=postgresql+asyncpg://u:p@db:5432/devpilot \
             devpilot-api:ci \
             python -c "from devpilot.main import create_app; create_app(); print('image ok')"
+
+      # The runtime/dev split is only real if something enforces it. Without
+      # this, adding pytest to the production image would pass every other
+      # check in this workflow.
+      - name: Assert the runtime image carries no test dependencies
+        run: |
+          if docker run --rm devpilot-api:ci python -c "import pytest" 2>/dev/null; then
+            echo "::error::pytest is present in the runtime image; it belongs in the dev stage"
+            exit 1
+          fi
+          if docker run --rm devpilot-api:ci sh -c "test -e /app/tests" 2>/dev/null; then
+            echo "::error::test code is present in the runtime image"
+            exit 1
+          fi
+          echo "runtime image is free of test dependencies and test code"
+
+      # Build the dev target too, so a Dockerfile change that breaks the
+      # developer test image is caught here rather than on someone's laptop.
+      - name: Build dev image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          target: dev
+          push: false
+          load: true
+          tags: devpilot-api:dev
+          cache-from: type=gha
+
+      - name: Assert pytest is runnable in the dev image
+        run: docker run --rm devpilot-api:dev pytest --collect-only -q -m "not integration" | tail -3

@@ -1,0 +1,43 @@
+# Keep the build context small and the image reproducible.
+#
+# This matters more now that the dev stage copies `src` and `tests` into the
+# image: without it, a developer's local .venv (hundreds of MB) and any stale
+# __pycache__ or .pyc built against a different interpreter get shipped into
+# the build context and, worse, into the image -- so an image built on a
+# laptop would differ from one built in CI.
+
+# Virtualenvs — these are the big one.
+.venv/
+venv/
+env/
+
+# Byte code, compiled against whatever interpreter happened to be local.
+__pycache__/
+*.py[cod]
+*.so
+
+# Tool caches.
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Packaging artefacts.
+*.egg-info/
+dist/
+build/
+
+# Local secrets must never enter the build context, let alone a layer.
+.env
+.env.*
+!.env.example
+
+# VCS and editor noise.
+.git/
+.gitignore
+.idea/
+.vscode/
+*.swp
+.DS_Store

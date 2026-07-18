@@ -39,3 +39,38 @@ USER devpilot
 EXPOSE 8000
 
 CMD ["uvicorn", "devpilot.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+
+
+# ---------------------------------------------------------------------------
+# Development / test image.
+#
+# Deliberately a separate stage rather than adding pytest to `runtime`. A
+# production image that ships a test framework is a defect: it inflates the
+# image, widens the dependency surface that has to be scanned and patched, and
+# lets test-only code be imported by accident in production. `runtime` is what
+# deploys; `dev` is what you run tests in. They share every layer up to this
+# point, so the split costs one cached layer and no rebuild time.
+#
+# `docker compose` builds this target for local development. CI builds
+# `runtime` as well, which is what keeps the lean image honest -- if the
+# production image ever grows a test dependency, that job is where it shows.
+# ---------------------------------------------------------------------------
+FROM runtime AS dev
+
+USER root
+
+# The test configuration lives in pyproject.toml, so pytest needs it present
+# to find rootdir, testpaths, asyncio_mode and the registered markers. Without
+# it pytest runs with defaults and every async test errors out.
+COPY --chown=devpilot:devpilot pyproject.toml ./
+COPY --chown=devpilot:devpilot src ./src
+COPY --chown=devpilot:devpilot tests ./tests
+
+# Editable install so the source bind-mounted over /app/src at run time is the
+# source under test, rather than a stale copy baked into the image.
+# --no-cache-dir explicitly: PIP_NO_CACHE_DIR is set in the builder stage and
+# ENV does not survive a FROM, so without this the wheel cache is baked into
+# the image layer.
+RUN pip install --no-cache-dir -e ".[dev]"
+
+USER devpilot

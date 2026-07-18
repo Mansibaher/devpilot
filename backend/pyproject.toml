@@ -34,7 +34,13 @@ packages = ["src/devpilot"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-pythonpath = ["src"]
+# "src" makes the package importable without an install step. "." makes the
+# `tests` package importable, which `from tests.conftest import ...` needs.
+# Without ".", the suite passes under `python -m pytest` (which injects the
+# working directory into sys.path) and fails under bare `pytest` (which does
+# not) -- so it would work on a developer laptop and break inside the
+# container. Pinning both here makes the two invocations equivalent.
+pythonpath = ["src", "."]
 addopts = "-q --strict-markers"
 markers = [
     "integration: requires a live PostgreSQL with pgvector (deselect with -m 'not integration')",

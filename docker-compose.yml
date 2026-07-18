@@ -43,7 +43,9 @@ services:
   api:
     build:
       context: ./backend
-      target: runtime
+      # The dev target adds pytest and the test suite on top of runtime.
+      # Production and CI build `runtime`, which carries neither.
+      target: dev
     environment:
       # The image installs devpilot into the venv's site-packages. The bind
       # mount below would otherwise be ignored, since the installed copy wins.
@@ -66,6 +68,9 @@ services:
     # image itself has no reloader and no bind mount in any other environment.
     volumes:
       - ./backend/src:/app/src:ro
+      # Tests are baked into the dev image so `docker compose run` works from
+      # cold, and mounted so editing one does not require a rebuild.
+      - ./backend/tests:/app/tests:ro
     command:
       - uvicorn
       - devpilot.main:create_app

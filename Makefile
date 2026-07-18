@@ -1,4 +1,4 @@
-.PHONY: help up down logs test test-integration cov lint fmt typecheck check migrate revision
+.PHONY: help up down logs test test-integration test-docker test-docker-cold cov lint fmt typecheck check migrate revision rebuild
 
 help:
 	@grep -E '^[a-z-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-12s %s\n", $$1, $$2}'
@@ -19,6 +19,15 @@ test:  ## Run unit tests (no database required)
 
 test-integration:  ## Run all tests, including those needing live Postgres
 	cd backend && python -m alembic upgrade head && python -m pytest
+
+test-docker:  ## Run the full suite inside the running api container
+	docker compose exec api pytest
+
+test-docker-cold:  ## Run the full suite in a throwaway container (starts db + migrations)
+	docker compose run --rm api pytest
+
+rebuild:  ## Rebuild images after changing dependencies or the Dockerfile
+	docker compose build --no-cache api
 
 cov:  ## Run tests with a coverage report
 	cd backend && python -m pytest --cov=devpilot --cov-report=term-missing
