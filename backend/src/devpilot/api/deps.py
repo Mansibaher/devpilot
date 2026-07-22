@@ -10,10 +10,16 @@ from collections.abc import AsyncIterator
 from typing import Annotated
 
 from fastapi import Depends, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from devpilot.core.config import Settings
+from devpilot.core.errors import AuthenticationError
+from devpilot.core.security import TokenError, decode_access_token
 from devpilot.db.session import Database
+from devpilot.models.user import User
+from devpilot.repositories.user_repo import UserRepository
+from devpilot.services.auth_service import AuthService
 
 
 def get_settings_from_state(request: Request) -> Settings:
@@ -72,3 +78,82 @@ async def get_session(
 SettingsDep = Annotated[Settings, Depends(get_settings_from_state)]
 DatabaseDep = Annotated[Database, Depends(get_database)]
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
+
+
+def get_user_repository(session: SessionDep) -> UserRepository:
+    """Return a user repository bound to the request-scoped session.
+
+    Args:
+        session: The request-scoped async session.
+
+    Returns:
+        A ``UserRepository`` for this request.
+
+    """
+    return UserRepository(session)
+
+
+UserRepositoryDep = Annotated[UserRepository, Depends(get_user_repository)]
+
+
+def get_auth_service(users: UserRepositoryDep, settings: SettingsDep) -> AuthService:
+    """Return an auth service wired to the repository and settings.
+
+    Args:
+        users: The request-scoped user repository.
+        settings: The application settings.
+
+    Returns:
+        An ``AuthService`` for this request.
+
+    """
+    return AuthService(users, settings)
+
+
+AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
+
+# auto_error=False so a missing Authorization header raises our own
+# AuthenticationError with the canonical error envelope, rather than FastAPI's
+# default 403 with a differently shaped body. Every auth failure -- absent,
+# malformed, expired -- then returns an identical 401.
+_bearer_scheme = HTTPBearer(auto_error=False)
+BearerCredentials = Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer_scheme)]
+
+
+async def get_current_user(
+    credentials: BearerCredentials,
+    auth_service: AuthServiceDep,
+    settings: SettingsDep,
+) -> User:
+    """Resolve the authenticated user from a bearer token.
+
+    Returns 401 for every failure mode -- no header, wrong scheme, bad
+    signature, expired token, or a subject that no longer maps to an active
+    user -- with one indistinguishable error, so nothing about why the token
+    was rejected leaks to the caller.
+
+    Args:
+        credentials: Parsed ``Authorization: Bearer`` credentials, or None.
+        auth_service: The auth service, used to load the subject.
+        settings: Supplies the verification secret and permitted algorithm.
+
+    Returns:
+        The authenticated, active ``User``.
+
+    Raises:
+        AuthenticationError: For any missing, malformed, expired, or unresolved
+            token. Maps to 401 via the installed handler.
+
+    """
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise AuthenticationError("Not authenticated.")
+    try:
+        subject = decode_access_token(credentials.credentials, settings)
+    except TokenError as exc:
+        raise AuthenticationError("Not authenticated.") from exc
+    # InvalidCredentialsError (an AuthenticationError) propagates unchanged if
+    # the subject no longer resolves to an active user.
+    return await auth_service.get_user(subject)
+
+
+CurrentUserDep = Annotated[User, Depends(get_current_user)]

@@ -2,7 +2,7 @@
 
 Ask questions about a GitHub repository and get answers grounded in its actual source, with citations back to the exact files and line ranges the answer came from.
 
-**Status:** M1 — scaffold, configuration, migrations, health probes, CI. No product functionality yet.
+**Status:** M2 — scaffold, configuration, migrations, health probes, CI, and authentication (register / login / current-user). No repository ingestion yet.
 
 ## Scope
 
@@ -135,6 +135,9 @@ make test-integration
 | GET | `/health` | Liveness. Touches no dependency. Always 200 while the process runs. |
 | GET | `/healthz` | Undocumented alias of `/health`, for orchestrators that default to this path. |
 | GET | `/readyz` | Readiness. 200 when Postgres is reachable, 503 otherwise. |
+| POST | `/api/v1/auth/register` | Create an account. `{email, password}` → `201` user (no hash). `409` on duplicate, `422` on invalid email / weak password. |
+| POST | `/api/v1/auth/login` | Exchange credentials for a token. `{email, password}` → `200 {access_token, token_type}`. `401` on any failure, identical for unknown email and wrong password. |
+| GET | `/api/v1/auth/me` | Return the authenticated user. Requires `Authorization: Bearer <jwt>`. `401` for missing, malformed, or expired tokens. |
 | GET | `/docs` | OpenAPI UI. Disabled when `DEVPILOT_ENVIRONMENT=production`. |
 
 ### Configuration
@@ -143,6 +146,44 @@ Every setting is an environment variable prefixed `DEVPILOT_`, parsed and
 validated once in `core/config.py`; no other module reads `os.environ`. See
 `.env.example` for the full list. There are no secrets in the repository and
 no defaults for anything that would be a secret in production.
+
+`DEVPILOT_JWT_SECRET` is **required and has no default** — the app refuses to
+start without it, and a value under 32 characters is rejected at boot rather
+than in production. Generate one with:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+Compose reads it from your `.env`; it is never hardcoded in `docker-compose.yml`.
+
+### Authentication
+
+Passwords are hashed with **Argon2id** (`argon2-cffi`) and never stored or
+logged in plaintext. The password policy is passphrase-friendly: 12–128
+characters, spaces and Unicode allowed, no composition rules. Access tokens are
+**HS256 JWTs** carrying `sub`, `iat`, and `exp`, valid for 15 minutes; token
+decoding pins the algorithm explicitly, so `alg: none` and algorithm-confusion
+attacks are rejected. Login returns one generic `401` for both unknown email
+and wrong password, and does equal work in both cases so response timing cannot
+be used to enumerate accounts. Refresh tokens, OAuth, roles, email
+verification, and password reset are deliberately out of scope at this
+milestone.
+
+Example flow:
+
+```bash
+curl -X POST localhost:8000/api/v1/auth/register \
+  -H 'content-type: application/json' \
+  -d '{"email":"you@example.com","password":"a proper long passphrase"}'
+
+TOKEN=$(curl -s -X POST localhost:8000/api/v1/auth/login \
+  -H 'content-type: application/json' \
+  -d '{"email":"you@example.com","password":"a proper long passphrase"}' \
+  | python -c 'import sys,json; print(json.load(sys.stdin)["access_token"])')
+
+curl localhost:8000/api/v1/auth/me -H "Authorization: Bearer $TOKEN"
+```
 
 ### Troubleshooting
 
@@ -160,7 +201,7 @@ no defaults for anything that would be a secret in production.
 | | Milestone |
 | --- | --- |
 | M1 | Scaffold, config, pgvector migration, health, CI ✅ |
-| M2 | Users, auth, refresh rotation |
+| M2 | Users, registration, login, JWT access tokens ✅ |
 | M3 | Repository import, `index_jobs`, worker loop |
 | M4 | Clone, walk, chunk, persist |
 | M5 | Embeddings, HNSW, vector search |

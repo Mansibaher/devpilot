@@ -43,6 +43,8 @@ def settings() -> Settings:
     return Settings(
         environment="ci",
         database_url="postgresql+asyncpg://devpilot:devpilot@localhost:5432/devpilot_test",  # type: ignore[arg-type]
+        jwt_secret="test-secret-not-used-in-production-min-32-chars",
+        jwt_access_ttl_minutes=15,
     )
 
 

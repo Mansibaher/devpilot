@@ -16,6 +16,10 @@ env:
   # depends on later.
   DEVPILOT_ENVIRONMENT: ci
   DEVPILOT_DATABASE_URL: postgresql+asyncpg://devpilot:devpilot@localhost:5432/devpilot_test
+  # A throwaway signing secret for CI only. Settings validate at import, so the
+  # migrate and test steps cannot construct the app without one. Never a real
+  # secret: production reads its own from the deployment environment.
+  DEVPILOT_JWT_SECRET: ci-only-signing-secret-at-least-32-characters
 
 jobs:
   quality:
@@ -102,6 +106,7 @@ jobs:
         run: |
           docker run --rm \
             -e DEVPILOT_DATABASE_URL=postgresql+asyncpg://u:p@db:5432/devpilot \
+            -e DEVPILOT_JWT_SECRET=ci-only-signing-secret-at-least-32-characters \
             devpilot-api:ci \
             python -c "from devpilot.main import create_app; create_app(); print('image ok')"
 

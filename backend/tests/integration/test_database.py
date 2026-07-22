@@ -19,11 +19,24 @@ async def test_database_check_succeeds_against_live_postgres(database: Database)
 
 
 async def test_migrations_have_been_applied(database: Database) -> None:
-    """`alembic upgrade head` must have run; the version table records the head."""
+    """Migrations must have run and be at the latest head.
+
+    Asserts the head recorded in the database matches Alembic's script head,
+    rather than pinning a literal revision. Pinning a literal meant every new
+    migration broke this test; comparing against the script directory's head
+    keeps it meaningful without that churn.
+    """
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    config = Config("alembic.ini")
+    expected_head = ScriptDirectory.from_config(config).get_current_head()
+
     async with database.engine.connect() as conn:
         result = await conn.execute(text("SELECT version_num FROM alembic_version"))
-        versions = [row[0] for row in result]
-    assert versions == ["0001"], "run `make migrate` before the integration suite"
+        applied = [row[0] for row in result]
+
+    assert applied == [expected_head], "run `make migrate` before the integration suite"
 
 
 async def test_pgvector_extension_is_installed(database: Database) -> None:

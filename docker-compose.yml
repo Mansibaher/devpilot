@@ -34,6 +34,9 @@ services:
     environment:
       DEVPILOT_ENVIRONMENT: local
       DEVPILOT_DATABASE_URL: postgresql+asyncpg://devpilot:devpilot@db:5432/devpilot
+      # Settings validate at import, so even the migrate job needs a secret
+      # present. It is read from the shell env (see .env), never hardcoded here.
+      DEVPILOT_JWT_SECRET: ${DEVPILOT_JWT_SECRET:?set DEVPILOT_JWT_SECRET in your .env}
     depends_on:
       db:
         condition: service_healthy
@@ -56,6 +59,8 @@ services:
       DEVPILOT_DEBUG: "true"
       DEVPILOT_LOG_LEVEL: DEBUG
       DEVPILOT_DATABASE_URL: postgresql+asyncpg://devpilot:devpilot@db:5432/devpilot
+      DEVPILOT_JWT_SECRET: ${DEVPILOT_JWT_SECRET:?set DEVPILOT_JWT_SECRET in your .env}
+      DEVPILOT_JWT_ACCESS_TTL_MINUTES: "15"
       DEVPILOT_CORS_ORIGINS: '["http://localhost:5173"]'
     ports:
       - "8000:8000"

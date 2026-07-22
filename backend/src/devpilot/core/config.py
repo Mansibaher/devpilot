@@ -32,6 +32,9 @@ class Settings(BaseSettings):
         db_max_overflow: Additional connections opened under burst load.
         db_pool_timeout_seconds: How long a caller waits for a connection
             before failing fast rather than queueing indefinitely.
+        jwt_secret: HS256 signing key for access tokens. Required; no default.
+        jwt_algorithm: Signing algorithm, constrained to HS256.
+        jwt_access_ttl_minutes: Access-token lifetime in minutes.
         cors_origins: Browser origins permitted to call the API.
 
     """
@@ -54,6 +57,25 @@ class Settings(BaseSettings):
     db_pool_size: int = Field(default=5, ge=1, le=50)
     db_max_overflow: int = Field(default=10, ge=0, le=50)
     db_pool_timeout_seconds: float = Field(default=5.0, gt=0)
+
+    jwt_secret: str = Field(
+        min_length=32,
+        description=(
+            "Secret used to sign access tokens (HS256). Required, with no "
+            "default: an app that signs tokens with a predictable key is worse "
+            "than one that refuses to start. The 32-character floor is enforced "
+            "here so a weak secret fails at boot rather than in production."
+        ),
+    )
+    jwt_algorithm: Literal["HS256"] = Field(
+        default="HS256",
+        description=(
+            "Signing algorithm. A Literal, not a free string, so it can never "
+            "be set to 'none'. Token decoding pins this same value explicitly, "
+            "which is the defence against alg-substitution attacks."
+        ),
+    )
+    jwt_access_ttl_minutes: int = Field(default=15, ge=1, le=1440)
 
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
 
