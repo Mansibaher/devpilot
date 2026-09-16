@@ -125,6 +125,17 @@ jobs:
           fi
           echo "runtime image is free of test dependencies and test code"
 
+      # The worker runs the production image and shells out to git, so both the
+      # git binary and the worker module must be present there.
+      - name: Assert the runtime image can run the worker
+        run: |
+          docker run --rm devpilot-api:ci git --version
+          docker run --rm \
+            -e DEVPILOT_DATABASE_URL=postgresql+asyncpg://u:p@db:5432/devpilot \
+            -e DEVPILOT_JWT_SECRET=ci-only-signing-secret-at-least-32-characters \
+            devpilot-api:ci \
+            python -c "import devpilot.worker; print('worker importable')"
+
       # Build the dev target too, so a Dockerfile change that breaks the
       # developer test image is caught here rather than on someone's laptop.
       - name: Build dev image

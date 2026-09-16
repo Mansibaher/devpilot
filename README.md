@@ -2,7 +2,7 @@
 
 Ask questions about a GitHub repository and get answers grounded in its actual source, with citations back to the exact files and line ranges the answer came from.
 
-**Status:** M2 — scaffold, configuration, migrations, health probes, CI, and authentication (register / login / current-user). No repository ingestion yet.
+**Status:** M3 — adds repository registration, a durable Postgres-backed job queue, a dedicated worker process, safe GitHub cloning, and file discovery. No embeddings or search yet.
 
 ## Scope
 
@@ -138,6 +138,11 @@ make test-integration
 | POST | `/api/v1/auth/register` | Create an account. `{email, password}` → `201` user (no hash). `409` on duplicate, `422` on invalid email / weak password. |
 | POST | `/api/v1/auth/login` | Exchange credentials for a token. `{email, password}` → `200 {access_token, token_type}`. `401` on any failure, identical for unknown email and wrong password. |
 | GET | `/api/v1/auth/me` | Return the authenticated user. Requires `Authorization: Bearer <jwt>`. `401` for missing, malformed, or expired tokens. |
+| POST | `/api/v1/repositories` | Register a GitHub repo. `{url}` → `201`. `422` invalid/non-GitHub URL, `409` already registered by you. |
+| GET | `/api/v1/repositories` | List your repositories, newest first. Owner-scoped. |
+| GET | `/api/v1/repositories/{id}` | Fetch one of your repositories, including index status. `404` if absent **or** owned by someone else. |
+| POST | `/api/v1/repositories/{id}/index` | Queue indexing. `202` with the job. Idempotent: a queued/running job is returned rather than duplicated. |
+| GET | `/api/v1/repositories/{id}/jobs/{job_id}` | Poll a job's status and progress. |
 | GET | `/docs` | OpenAPI UI. Disabled when `DEVPILOT_ENVIRONMENT=production`. |
 
 ### Configuration
@@ -169,6 +174,40 @@ and wrong password, and does equal work in both cases so response timing cannot
 be used to enumerate accounts. Refresh tokens, OAuth, roles, email
 verification, and password reset are deliberately out of scope at this
 milestone.
+
+### Repository indexing
+
+Registering a repository validates the URL and stores its metadata; it does not
+clone. Cloning happens asynchronously in a **separate worker process**
+(`python -m devpilot.worker`, same image as the API) that pulls work from a
+durable queue.
+
+The queue is a Postgres table, not Redis or Celery. A worker claims the oldest
+queued job with `SELECT ... FOR UPDATE SKIP LOCKED`, so any number of workers
+can run concurrently and never claim the same job. Each running job renews a
+lease via a heartbeat; if a worker dies, its lease expires and the job is
+reclaimed, so the queue survives a crash. Scale workers with
+`docker compose up --scale worker=N`.
+
+Jobs move through `queued → running → succeeded | failed`, with `attempts`
+bounded by `max_attempts`. Re-indexing is idempotent: if the cloned HEAD already
+matches the last indexed commit, the scan is skipped entirely.
+
+**Cloning is hardened.** Only `https://github.com/owner/repo` URLs are accepted,
+validated with `urllib.parse` (not a regex) before anything touches the network;
+other schemes, other hosts, embedded credentials, ports, and path traversal are
+rejected. git runs with `shell=False` and an argument list, a scrubbed
+environment, `protocol.allowed=https`, `GIT_TERMINAL_PROMPT=0`, and a timeout.
+Clones are shallow and blobless into an isolated temp dir that is always removed.
+
+**Discovery filters** exclude dependency and build directories, secrets and
+credential files, large generated lockfiles, binaries (null-byte sniff), and
+unsupported types — while keeping useful special files (Dockerfile, Makefile,
+README/LICENSE, `.gitignore`, `.env.example`). Kept files are stored with path,
+language, size, and a SHA-256 checksum. Limits (200 MB repo / 5000 files / 1 MB
+per file / 300 s clone) are all configurable.
+
+Public repositories only in M3. Private repos, embeddings, and search come later.
 
 Example flow:
 
@@ -202,7 +241,7 @@ curl localhost:8000/api/v1/auth/me -H "Authorization: Bearer $TOKEN"
 | --- | --- |
 | M1 | Scaffold, config, pgvector migration, health, CI ✅ |
 | M2 | Users, registration, login, JWT access tokens ✅ |
-| M3 | Repository import, `index_jobs`, worker loop |
+| M3 | Repository import, durable queue, worker, safe cloning, file discovery ✅ |
 | M4 | Clone, walk, chunk, persist |
 | M5 | Embeddings, HNSW, vector search |
 | M6 | Hybrid retrieval + RRF |

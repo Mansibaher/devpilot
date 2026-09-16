@@ -35,6 +35,14 @@ class Settings(BaseSettings):
         jwt_secret: HS256 signing key for access tokens. Required; no default.
         jwt_algorithm: Signing algorithm, constrained to HS256.
         jwt_access_ttl_minutes: Access-token lifetime in minutes.
+        index_max_repo_bytes: Reject a clone whose working tree exceeds this.
+        index_max_files: Reject a repo with more discoverable files than this.
+        index_max_file_bytes: Skip any single file larger than this.
+        index_clone_timeout_seconds: Kill a clone that runs longer than this.
+        worker_poll_interval_seconds: Idle sleep between empty claim attempts.
+        worker_heartbeat_interval_seconds: How often a running job renews its lease.
+        worker_lease_timeout_seconds: Age past which a silent lease is reaped.
+        job_max_attempts: Attempts before a job is marked permanently failed.
         cors_origins: Browser origins permitted to call the API.
 
     """
@@ -76,6 +84,20 @@ class Settings(BaseSettings):
         ),
     )
     jwt_access_ttl_minutes: int = Field(default=15, ge=1, le=1440)
+
+    # --- Indexing limits (M3). All configurable via the environment. Each is a
+    # distinct defence: a repo can be under the size cap but have too many
+    # files, or within the file cap but contain one enormous blob. ---
+    index_max_repo_bytes: int = Field(default=200 * 1024 * 1024, ge=1)
+    index_max_files: int = Field(default=5000, ge=1)
+    index_max_file_bytes: int = Field(default=1024 * 1024, ge=1)
+    index_clone_timeout_seconds: int = Field(default=300, ge=1, le=3600)
+
+    # --- Worker loop (M3) ---
+    worker_poll_interval_seconds: float = Field(default=2.0, gt=0)
+    worker_heartbeat_interval_seconds: float = Field(default=10.0, gt=0)
+    worker_lease_timeout_seconds: float = Field(default=60.0, gt=0)
+    job_max_attempts: int = Field(default=3, ge=1, le=10)
 
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
 

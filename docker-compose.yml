@@ -95,5 +95,34 @@ services:
       start_period: 10s
     restart: unless-stopped
 
+  # The indexing worker: same image, different entrypoint. It shares the API's
+  # code, models, and config, and adds no new service dependency -- the durable
+  # queue lives in Postgres, which it already needs. Scale with
+  # `docker compose up --scale worker=N`; SKIP LOCKED makes concurrent workers
+  # safe with no further coordination.
+  worker:
+    build:
+      context: ./backend
+      target: dev
+    environment:
+      PYTHONPATH: /app/src
+      DEVPILOT_ENVIRONMENT: local
+      DEVPILOT_DEBUG: "true"
+      DEVPILOT_LOG_LEVEL: DEBUG
+      DEVPILOT_DATABASE_URL: postgresql+asyncpg://devpilot:devpilot@db:5432/devpilot
+      DEVPILOT_JWT_SECRET: ${DEVPILOT_JWT_SECRET:?set DEVPILOT_JWT_SECRET in your .env}
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - ./backend/src:/app/src:ro
+    command:
+      - python
+      - -m
+      - devpilot.worker
+    restart: unless-stopped
+
 volumes:
   db_data:

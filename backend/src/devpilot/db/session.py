@@ -49,11 +49,17 @@ class Database:
             pool_timeout=settings.db_pool_timeout_seconds,
             pool_pre_ping=True,
         )
+        self._settings = settings
         self._session_factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
             bind=self._engine,
             expire_on_commit=False,
             autoflush=False,
         )
+
+    @property
+    def settings(self) -> Settings:
+        """Return the settings this database was built from."""
+        return self._settings
 
     @property
     def engine(self) -> AsyncEngine:

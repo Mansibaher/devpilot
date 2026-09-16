@@ -37,3 +37,18 @@ def new_user_id() -> uuid.UUID:
 
     """
     return uuid7()
+
+
+def new_id() -> uuid.UUID:
+    """Return a fresh UUIDv7 for any row.
+
+    The general-purpose generator for tables added after users. Identical
+    behaviour to :func:`new_user_id`; the two names exist only so call sites
+    read clearly. Both collapse to ``uuid.uuid7`` when the project reaches
+    Python 3.14.
+
+    Returns:
+        A version-7 UUID.
+
+    """
+    return uuid7()

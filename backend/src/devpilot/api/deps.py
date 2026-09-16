@@ -18,8 +18,12 @@ from devpilot.core.errors import AuthenticationError
 from devpilot.core.security import TokenError, decode_access_token
 from devpilot.db.session import Database
 from devpilot.models.user import User
+from devpilot.repositories.event_repo import EventRepository
+from devpilot.repositories.job_repo import JobRepository
+from devpilot.repositories.repository_repo import RepositoryRepository
 from devpilot.repositories.user_repo import UserRepository
 from devpilot.services.auth_service import AuthService
+from devpilot.services.repository_service import RepositoryService
 
 
 def get_settings_from_state(request: Request) -> Settings:
@@ -157,3 +161,25 @@ async def get_current_user(
 
 
 CurrentUserDep = Annotated[User, Depends(get_current_user)]
+
+
+def get_repository_service(session: SessionDep, settings: SettingsDep) -> RepositoryService:
+    """Return a repository service wired to its repositories and settings.
+
+    Args:
+        session: The request-scoped async session.
+        settings: The application settings.
+
+    Returns:
+        A ``RepositoryService`` for this request.
+
+    """
+    return RepositoryService(
+        RepositoryRepository(session),
+        JobRepository(session),
+        EventRepository(session),
+        settings,
+    )
+
+
+RepositoryServiceDep = Annotated[RepositoryService, Depends(get_repository_service)]

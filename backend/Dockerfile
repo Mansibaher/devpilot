@@ -29,6 +29,17 @@ ENV PATH="/opt/venv/bin:$PATH" \
 
 RUN groupadd --system devpilot && useradd --system --gid devpilot --create-home devpilot
 
+# git is a runtime dependency now: the worker shells out to it to clone
+# repositories. Installed in runtime (not just dev) because the worker runs the
+# production image. --no-install-recommends keeps the layer minimal. git is not
+# version-pinned: the exact distro version is dropped from Debian's repo on each
+# point release, which would break the build; we take the base image's patched
+# git instead.
+# hadolint ignore=DL3008
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY --from=builder /opt/venv /opt/venv
 
 WORKDIR /app

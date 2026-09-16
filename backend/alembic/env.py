@@ -15,7 +15,13 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from devpilot.core.config import get_settings
 from devpilot.db.base import Base
-from devpilot.models import User  # noqa: F401  (registers tables on Base.metadata)
+from devpilot.models import (  # noqa: F401  (registers tables on Base.metadata)
+    IndexJob,
+    Repository,
+    RepositoryEvent,
+    RepositoryFile,
+    User,
+)
 
 config = context.config
 config.set_main_option("sqlalchemy.url", str(get_settings().database_url))

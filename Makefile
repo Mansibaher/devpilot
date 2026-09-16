@@ -1,4 +1,4 @@
-.PHONY: help up down logs test test-integration test-docker test-docker-cold cov lint fmt typecheck check migrate revision rebuild
+.PHONY: help up down logs test test-integration test-docker test-docker-cold cov lint fmt typecheck check migrate revision rebuild worker
 
 help:
 	@grep -E '^[a-z-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-12s %s\n", $$1, $$2}'
@@ -25,6 +25,9 @@ test-docker:  ## Run the full suite inside the running api container
 
 test-docker-cold:  ## Run the full suite in a throwaway container (starts db + migrations)
 	docker compose run --rm api pytest
+
+worker:  ## Run the indexing worker locally against the compose database
+	cd backend && DEVPILOT_DATABASE_URL=postgresql+asyncpg://devpilot:devpilot@localhost:5432/devpilot python -m devpilot.worker
 
 rebuild:  ## Rebuild images after changing dependencies or the Dockerfile
 	docker compose build --no-cache api
