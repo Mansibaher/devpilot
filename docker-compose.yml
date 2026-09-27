@@ -61,6 +61,7 @@ services:
       DEVPILOT_DATABASE_URL: postgresql+asyncpg://devpilot:devpilot@db:5432/devpilot
       DEVPILOT_JWT_SECRET: ${DEVPILOT_JWT_SECRET:?set DEVPILOT_JWT_SECRET in your .env}
       DEVPILOT_JWT_ACCESS_TTL_MINUTES: "15"
+      HF_HOME: /models
       DEVPILOT_CORS_ORIGINS: '["http://localhost:5173"]'
     ports:
       - "8000:8000"
@@ -76,6 +77,9 @@ services:
       # Tests are baked into the dev image so `docker compose run` works from
       # cold, and mounted so editing one does not require a rebuild.
       - ./backend/tests:/app/tests:ro
+      # Shared Hugging Face model cache: the embedding model downloads once and
+      # both api and worker reuse it across restarts.
+      - hf_cache:/models
     command:
       - uvicorn
       - devpilot.main:create_app
@@ -111,6 +115,7 @@ services:
       DEVPILOT_LOG_LEVEL: DEBUG
       DEVPILOT_DATABASE_URL: postgresql+asyncpg://devpilot:devpilot@db:5432/devpilot
       DEVPILOT_JWT_SECRET: ${DEVPILOT_JWT_SECRET:?set DEVPILOT_JWT_SECRET in your .env}
+      HF_HOME: /models
     depends_on:
       db:
         condition: service_healthy
@@ -118,6 +123,7 @@ services:
         condition: service_completed_successfully
     volumes:
       - ./backend/src:/app/src:ro
+      - hf_cache:/models
     command:
       - python
       - -m
@@ -126,3 +132,4 @@ services:
 
 volumes:
   db_data:
+  hf_cache:

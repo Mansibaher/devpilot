@@ -9,9 +9,9 @@ being overridable in tests via ``get_settings.cache_clear()``.
 """
 
 from functools import lru_cache
-from typing import Literal
+from typing import ClassVar, Literal
 
-from pydantic import Field, PostgresDsn
+from pydantic import Field, PostgresDsn, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Environment = Literal["local", "ci", "production"]
@@ -43,6 +43,15 @@ class Settings(BaseSettings):
         worker_heartbeat_interval_seconds: How often a running job renews its lease.
         worker_lease_timeout_seconds: Age past which a silent lease is reaped.
         job_max_attempts: Attempts before a job is marked permanently failed.
+        embedding_provider: 'sentence_transformer' (real, lazy) or 'fake'.
+        embedding_model: sentence-transformers model id; must emit embedding_dim.
+        embedding_dim: Vector dimension. A schema invariant (see the validator),
+            not a free knob: it must match the vector column in migration 0004.
+        embedding_batch_size: Chunks embedded per batch.
+        chunk_window_lines: Lines per chunk window (> 0).
+        chunk_overlap_lines: Overlap between adjacent windows (>= 0, < window).
+        search_default_top_k: Default result count for semantic search.
+        search_max_top_k: Hard cap on requested result count.
         cors_origins: Browser origins permitted to call the API.
 
     """
@@ -99,7 +108,78 @@ class Settings(BaseSettings):
     worker_lease_timeout_seconds: float = Field(default=60.0, gt=0)
     job_max_attempts: int = Field(default=3, ge=1, le=10)
 
+    # --- Embeddings (M4) ---
+    # The provider is swappable behind the EmbeddingProvider port, but it MUST
+    # produce vectors of EMBEDDING_DIM, and EMBEDDING_DIM is not a free knob:
+    # migration 0004 declares the column as vector(768), so 768 is an invariant
+    # of this schema version. Changing it requires a new migration that alters
+    # (or recreates) the embedding column and rebuilds the HNSW index. The real
+    # provider validates its own output dimension against this value at load
+    # time and fails loudly on a mismatch, so a model that does not match the
+    # schema can never write rows the database would reject anyway.
+    embedding_provider: Literal["sentence_transformer", "fake"] = Field(
+        default="sentence_transformer",
+        description=(
+            "Which embedding backend to use. 'fake' is deterministic and needs "
+            "no model or network, and is what tests and CI run with. "
+            "'sentence_transformer' loads the real model lazily on first use."
+        ),
+    )
+    embedding_model: str = Field(
+        default="jinaai/jina-embeddings-v2-base-code",
+        description=(
+            "The sentence-transformers model id. Must emit EMBEDDING_DIM "
+            "dimensions to be compatible with the vector(768) schema column."
+        ),
+    )
+    # Fixed to the schema's vector dimension. Exposed as a setting only so the
+    # fake provider and the real provider agree on a single source of truth --
+    # not because it is safe to change without a migration. The validator below
+    # rejects any value that would silently diverge from the 0004 schema.
+    embedding_dim: int = Field(default=768, ge=1)
+    embedding_batch_size: int = Field(default=32, ge=1, le=256)
+
+    # --- Chunking (M4) ---
+    chunk_window_lines: int = Field(default=40, gt=0)
+    chunk_overlap_lines: int = Field(default=10, ge=0)
+
+    # --- Semantic search (M4) ---
+    search_default_top_k: int = Field(default=10, ge=1, le=200)
+    search_max_top_k: int = Field(default=50, ge=1, le=200)
+
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
+
+    # The vector(768) column in migration 0004 is the source of truth for the
+    # embedding dimension. This constant guards against a config that would
+    # write vectors the schema cannot store; it must be updated in lockstep
+    # with any future migration that changes the column dimension.
+    SCHEMA_EMBEDDING_DIM: ClassVar[int] = 768
+
+    @model_validator(mode="after")
+    def _validate_embedding_and_chunking(self) -> "Settings":
+        """Enforce the dimension invariant and the chunk-window relationship.
+
+        - ``embedding_dim`` must equal the dimension baked into the current
+          schema. Migration 0004 declares ``vector(768)``; a differing value
+          would produce vectors Postgres rejects, so this fails at startup with
+          a clear message rather than at the first insert.
+        - ``chunk_overlap_lines`` must be strictly less than
+          ``chunk_window_lines``; an overlap equal to or larger than the window
+          would never advance and would loop forever.
+        """
+        if self.embedding_dim != self.SCHEMA_EMBEDDING_DIM:
+            raise ValueError(
+                f"embedding_dim={self.embedding_dim} does not match the schema "
+                f"dimension {self.SCHEMA_EMBEDDING_DIM}. The embedding column is "
+                f"vector({self.SCHEMA_EMBEDDING_DIM}); changing the dimension "
+                "requires a database migration, not just a config change."
+            )
+        if self.chunk_overlap_lines >= self.chunk_window_lines:
+            raise ValueError(
+                f"chunk_overlap_lines ({self.chunk_overlap_lines}) must be less "
+                f"than chunk_window_lines ({self.chunk_window_lines})."
+            )
+        return self
 
     @property
     def is_production(self) -> bool:

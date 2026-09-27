@@ -34,3 +34,20 @@ class InvalidCredentialsError(AuthenticationError):
     def __init__(self) -> None:
         """Initialise with the single generic authentication-failure message."""
         super().__init__("Invalid email or password.")
+
+
+class RepositoryNotIndexedError(ConflictError):
+    """Search attempted on a repository that has no embeddings yet.
+
+    Maps to 409. The repository exists and belongs to the user, but it has not
+    been indexed (or indexing has not produced any searchable chunks), so there
+    is nothing to search. A distinct 409 tells the client to index first, rather
+    than an empty 200 that looks like "no matches".
+    """
+
+    def __init__(self) -> None:
+        """Initialise with a message directing the caller to index first."""
+        super().__init__(
+            "This repository has not been indexed yet. Queue an index job and "
+            "wait for it to succeed before searching."
+        )

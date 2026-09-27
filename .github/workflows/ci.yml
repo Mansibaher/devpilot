@@ -20,6 +20,10 @@ env:
   # migrate and test steps cannot construct the app without one. Never a real
   # secret: production reads its own from the deployment environment.
   DEVPILOT_JWT_SECRET: ci-only-signing-secret-at-least-32-characters
+  # Tests must never download the embedding model or hit the network. The fake
+  # provider is deterministic and dependency-free; the real sentence-transformers
+  # model is exercised only by the manual eval harness, never in CI.
+  DEVPILOT_EMBEDDING_PROVIDER: fake
 
 jobs:
   quality:

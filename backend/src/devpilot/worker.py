@@ -29,7 +29,10 @@ from devpilot.core.config import get_settings
 from devpilot.core.logging import configure_logging
 from devpilot.db.session import Database
 from devpilot.models.index_job import IndexJob
+from devpilot.providers.embeddings.registry import build_embedding_provider
 from devpilot.providers.vcs.git_client import GitClient
+from devpilot.repositories.chunk_repo import ChunkRepository
+from devpilot.repositories.embedding_repo import EmbeddingRepository
 from devpilot.repositories.event_repo import EventRepository
 from devpilot.repositories.file_repo import FileRepository
 from devpilot.repositories.job_repo import JobRepository
@@ -63,6 +66,10 @@ class Worker:
         self._settings = database.settings
         self._id = _worker_id()
         self._stopping = asyncio.Event()
+        # Built once per worker; the real provider loads its model lazily on the
+        # first embed call, so constructing it here is cheap and does not force
+        # a download at startup.
+        self._embedder = build_embedding_provider(self._settings)
 
     def request_stop(self) -> None:
         """Signal the loop to finish the current job and exit."""
@@ -124,6 +131,9 @@ class Worker:
                     EventRepository(session),
                     GitClient(self._settings.index_clone_timeout_seconds),
                     self._settings,
+                    chunks=ChunkRepository(session),
+                    embeddings=EmbeddingRepository(session),
+                    embedder=self._embedder,
                 )
                 await EventRepository(session).record(
                     job.repository_id, events.EVENT_INDEX_STARTED, {"job_id": str(job.id)}

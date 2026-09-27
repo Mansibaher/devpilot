@@ -18,12 +18,16 @@ from devpilot.core.errors import AuthenticationError
 from devpilot.core.security import TokenError, decode_access_token
 from devpilot.db.session import Database
 from devpilot.models.user import User
+from devpilot.providers.embeddings.base import EmbeddingProvider
+from devpilot.providers.embeddings.registry import build_embedding_provider
+from devpilot.repositories.embedding_repo import EmbeddingRepository
 from devpilot.repositories.event_repo import EventRepository
 from devpilot.repositories.job_repo import JobRepository
 from devpilot.repositories.repository_repo import RepositoryRepository
 from devpilot.repositories.user_repo import UserRepository
 from devpilot.services.auth_service import AuthService
 from devpilot.services.repository_service import RepositoryService
+from devpilot.services.search_service import SearchService
 
 
 def get_settings_from_state(request: Request) -> Settings:
@@ -183,3 +187,58 @@ def get_repository_service(session: SessionDep, settings: SettingsDep) -> Reposi
 
 
 RepositoryServiceDep = Annotated[RepositoryService, Depends(get_repository_service)]
+
+
+# The embedding provider is cached per process, keyed by provider name and
+# model, so the real model is loaded at most once in the API process (its first
+# search) rather than rebuilt on every request. The fake provider is cheap, but
+# caching it too keeps one code path. The cache is keyed, not global, so a test
+# that switches providers gets the right one.
+_embedding_provider_cache: dict[tuple[str, str], EmbeddingProvider] = {}
+
+
+def get_embedding_provider(settings: SettingsDep) -> EmbeddingProvider:
+    """Return the process-cached embedding provider for the current settings.
+
+    Args:
+        settings: The application settings, naming the provider and model.
+
+    Returns:
+        A shared ``EmbeddingProvider``. The real provider still loads its model
+        lazily on first use, so acquiring this dependency never forces a load.
+
+    """
+    key = (settings.embedding_provider, settings.embedding_model)
+    provider = _embedding_provider_cache.get(key)
+    if provider is None:
+        provider = build_embedding_provider(settings)
+        _embedding_provider_cache[key] = provider
+    return provider
+
+
+EmbeddingProviderDep = Annotated[EmbeddingProvider, Depends(get_embedding_provider)]
+
+
+def get_search_service(
+    session: SessionDep, embedder: EmbeddingProviderDep, settings: SettingsDep
+) -> SearchService:
+    """Return a search service wired to its repositories, provider, and settings.
+
+    Args:
+        session: The request-scoped async session.
+        embedder: The process-cached embedding provider.
+        settings: The application settings.
+
+    Returns:
+        A ``SearchService`` for this request.
+
+    """
+    return SearchService(
+        RepositoryRepository(session),
+        EmbeddingRepository(session),
+        embedder,
+        settings,
+    )
+
+
+SearchServiceDep = Annotated[SearchService, Depends(get_search_service)]

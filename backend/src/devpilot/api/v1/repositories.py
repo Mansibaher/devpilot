@@ -11,13 +11,14 @@ import uuid
 
 from fastapi import APIRouter, status
 
-from devpilot.api.deps import CurrentUserDep, RepositoryServiceDep
+from devpilot.api.deps import CurrentUserDep, RepositoryServiceDep, SearchServiceDep
 from devpilot.schemas.repository import (
     JobRead,
     RepositoryCreate,
     RepositoryList,
     RepositoryRead,
 )
+from devpilot.schemas.search import SearchRequest, SearchResponse, SearchResult
 
 router = APIRouter(prefix="/repositories", tags=["repositories"])
 
@@ -149,3 +150,50 @@ async def get_job(
     """
     job = await service.get_job(current_user.id, repository_id, job_id)
     return JobRead.model_validate(job)
+
+
+@router.post(
+    "/{repository_id}/search",
+    response_model=SearchResponse,
+    summary="Semantic search over a repository's indexed code",
+)
+async def search_repository(
+    repository_id: uuid.UUID,
+    payload: SearchRequest,
+    current_user: CurrentUserDep,
+    service: SearchServiceDep,
+) -> SearchResponse:
+    """Return the chunks most relevant to a query, with citations.
+
+    Owner-scoped: a repository that is not the caller's returns 404, exactly as
+    the other repository routes. A repository that exists but has no embeddings
+    yet returns 409, directing the caller to index it first. Results carry the
+    file path and line span so the caller can locate the source; no LLM answer
+    is generated in this milestone.
+
+    Args:
+        repository_id: The repository to search.
+        payload: The query and optional result count.
+        current_user: The authenticated user.
+        service: The search service.
+
+    Returns:
+        The ranked results, most relevant first.
+
+    """
+    hits = await service.search(current_user.id, repository_id, payload.query, payload.top_k)
+    return SearchResponse(
+        query=payload.query,
+        results=[
+            SearchResult(
+                chunk_id=h.chunk_id,
+                path=h.path,
+                language=h.language,
+                start_line=h.start_line,
+                end_line=h.end_line,
+                content=h.content,
+                score=h.score,
+            )
+            for h in hits
+        ],
+    )

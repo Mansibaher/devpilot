@@ -15,6 +15,12 @@ ENV PATH="/opt/venv/bin:$PATH"
 # Dependency layer is copied and installed before source so that editing a
 # source file does not invalidate the dependency cache on every rebuild.
 COPY pyproject.toml ./
+# Install the CPU-only torch build explicitly, before the project, so that
+# sentence-transformers (pulled in by the project) resolves against the already
+# installed CPU wheel instead of dragging in the multi-gigabyte CUDA build. This
+# is a portfolio project that runs on CPU locally; the GPU stack would bloat the
+# image for no benefit.
+RUN pip install --index-url https://download.pytorch.org/whl/cpu torch==2.5.1
 RUN mkdir -p src/devpilot && touch src/devpilot/__init__.py && pip install .
 
 COPY src ./src
@@ -25,9 +31,16 @@ FROM python:3.12-slim AS runtime
 
 ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    HF_HOME=/models
 
 RUN groupadd --system devpilot && useradd --system --gid devpilot --create-home devpilot
+
+# The Hugging Face cache lives at HF_HOME, mounted as a named volume in compose
+# so the embedding model is downloaded once and shared across restarts by both
+# the API and the worker. Created and owned by the app user so a non-root
+# process can write the first download.
+RUN mkdir -p /models && chown devpilot:devpilot /models
 
 # git is a runtime dependency now: the worker shells out to it to clone
 # repositories. Installed in runtime (not just dev) because the worker runs the

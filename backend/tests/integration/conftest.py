@@ -26,11 +26,17 @@ from devpilot.main import create_app
 
 @pytest.fixture(scope="session")
 def integration_settings() -> Settings:
-    """Return settings pointed at the real test database via the environment."""
+    """Return settings pointed at the real test database via the environment.
+
+    The embedding provider is pinned to 'fake' so the whole integration suite
+    is deterministic and never downloads a model or touches the network, even
+    though it drives the real worker and search paths end to end.
+    """
     return Settings(  # type: ignore[call-arg]
         environment="ci",
         jwt_secret="integration-secret-not-for-production-min-32c",
         jwt_access_ttl_minutes=15,
+        embedding_provider="fake",
     )
 
 

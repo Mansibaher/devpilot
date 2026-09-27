@@ -16,6 +16,8 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from devpilot.core.config import get_settings
 from devpilot.db.base import Base
 from devpilot.models import (  # noqa: F401  (registers tables on Base.metadata)
+    Chunk,
+    ChunkEmbedding,
     IndexJob,
     Repository,
     RepositoryEvent,

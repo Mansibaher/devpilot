@@ -1,5 +1,6 @@
 """Tests for application wiring: request correlation, error mapping, docs exposure."""
 
+import os
 import subprocess
 import sys
 
@@ -15,6 +16,15 @@ from devpilot.main import create_app
 async def test_request_id_is_generated_when_absent(client: AsyncClient) -> None:
     response = await client.get("/healthz")
     assert response.headers["X-Request-ID"]
+
+
+async def test_browser_workspace_serves_assets(client: AsyncClient) -> None:
+    response = await client.get("/")
+    assert response.status_code == 200
+    assert "Repository explorer" in response.text
+    for path in ("/workspace/app.js", "/workspace/style.css"):
+        asset = await client.get(path)
+        assert asset.status_code == 200
 
 
 async def test_inbound_request_id_is_echoed(client: AsyncClient) -> None:
@@ -60,9 +70,13 @@ def test_importing_main_does_not_read_the_environment() -> None:
     happens to be populated. Run in a subprocess with a scrubbed environment
     so no ambient variable can mask a regression.
     """
+    env = {"PATH": os.defpath, "PYTHONPATH": "src"}
+    # Windows needs SystemRoot to initialise networking during asyncio imports.
+    if sys.platform == "win32":
+        env["SYSTEMROOT"] = os.environ["SYSTEMROOT"]
     result = subprocess.run(
         [sys.executable, "-c", "import devpilot.main; print('ok')"],
-        env={"PATH": "/usr/bin:/bin", "PYTHONPATH": "src"},
+        env=env,
         capture_output=True,
         text=True,
         check=False,
@@ -76,6 +90,7 @@ def test_docs_are_disabled_in_production() -> None:
     app: FastAPI = create_app(
         Settings(
             environment="production",
+            jwt_secret="test-secret-not-used-in-production-min-32-chars",
             database_url="postgresql+asyncpg://u:p@db:5432/devpilot",  # type: ignore[arg-type]
         )
     )

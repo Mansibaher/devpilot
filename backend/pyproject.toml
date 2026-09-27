@@ -16,6 +16,10 @@ dependencies = [
     "argon2-cffi>=25.1.0",
     "pyjwt>=2.10.0",
     "uuid6>=2025.0.1",
+    "pgvector>=0.3.0",
+    # Jina v2's custom model code requires the Transformers 4.x API.
+    "sentence-transformers==3.0.1",
+    "transformers==4.44.2",
 ]
 
 [project.optional-dependencies]
@@ -71,4 +75,12 @@ plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
 module = ["alembic.*"]
+ignore_missing_imports = true
+
+# sentence-transformers ships no type stubs and is an optional heavy dependency
+# that is not installed in the CI/type-check environment (tests use the fake
+# provider). The real adapter imports it lazily inside a function; this tells
+# mypy to treat the missing import as untyped rather than an error.
+[[tool.mypy.overrides]]
+module = ["sentence_transformers.*"]
 ignore_missing_imports = true

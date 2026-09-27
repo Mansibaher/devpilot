@@ -1,0 +1,15 @@
+{"query": "how are JWT access tokens created and signed", "relevant_paths": ["src/devpilot/core/security.py"]}
+{"query": "where is the password hashing done", "relevant_paths": ["src/devpilot/core/security.py"]}
+{"query": "how does the worker claim a job from the queue", "relevant_paths": ["src/devpilot/repositories/job_repo.py", "src/devpilot/worker.py"]}
+{"query": "where are repository clone URLs validated", "relevant_paths": ["src/devpilot/providers/vcs/github.py"]}
+{"query": "how are files filtered during indexing", "relevant_paths": ["src/devpilot/indexing/file_filter.py"]}
+{"query": "how is a file split into chunks", "relevant_paths": ["src/devpilot/indexing/chunker.py"]}
+{"query": "how does semantic search rank chunks", "relevant_paths": ["src/devpilot/repositories/embedding_repo.py", "src/devpilot/services/search_service.py"]}
+{"query": "where is the git clone executed safely", "relevant_paths": ["src/devpilot/providers/vcs/git_client.py"]}
+{"query": "how does the readiness probe check the database", "relevant_paths": ["src/devpilot/api/health.py"]}
+{"query": "where are application settings and environment variables defined", "relevant_paths": ["src/devpilot/core/config.py"]}
+{"query": "how is the embedding dimension validated against the schema", "relevant_paths": ["src/devpilot/providers/embeddings/sentence_transformer.py", "src/devpilot/core/config.py"]}
+{"query": "where are index jobs retried after failure", "relevant_paths": ["src/devpilot/repositories/job_repo.py"]}
+{"query": "how are duplicate index requests made idempotent", "relevant_paths": ["src/devpilot/services/repository_service.py"]}
+{"query": "where is the current authenticated user resolved from a token", "relevant_paths": ["src/devpilot/api/deps.py"]}
+{"query": "how are repository events recorded", "relevant_paths": ["src/devpilot/repositories/event_repo.py", "src/devpilot/services/events.py"]}

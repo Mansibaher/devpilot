@@ -19,9 +19,12 @@ Uvicorn is therefore pointed at the factory itself::
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from devpilot.api import health
 from devpilot.api.v1 import api_router
@@ -128,4 +131,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     install_error_handlers(app)
     app.include_router(health.router)
     app.include_router(api_router, prefix="/api/v1")
+    web_dir = Path(__file__).parent / "web"
+    app.mount("/workspace", StaticFiles(directory=web_dir), name="workspace")
+
+    @app.get("/", include_in_schema=False)
+    async def workspace() -> FileResponse:
+        """Serve the browser workspace without exposing repository data."""
+        return FileResponse(web_dir / "index.html")
+
     return app

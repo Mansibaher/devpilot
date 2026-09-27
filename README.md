@@ -1,8 +1,45 @@
 # DevPilot AI
 
-Ask questions about a GitHub repository and get answers grounded in its actual source, with citations back to the exact files and line ranges the answer came from.
+Find relevant source code by asking questions in everyday language. DevPilot indexes public GitHub repositories and returns ranked code excerpts with filenames, line numbers, and links to the indexed commit.
 
-**Status:** M3 — adds repository registration, a durable Postgres-backed job queue, a dedicated worker process, safe GitHub cloning, and file discovery. No embeddings or search yet.
+**Status:** M4 — adds code chunking, embeddings (jina-embeddings-v2-base-code), pgvector storage, and owner-scoped semantic search. No LLM answers yet: search returns ranked source chunks with citations.
+
+
+## See it in action
+
+[Watch the recorded demo](devpilot-demo.webm) — a real search in the local browser workspace.
+
+![DevPilot searching BrainTumorClassifier for its dataset split](docs/assets/devpilot-workspace.png)
+
+**Example:** “Where is the dataset split into training and validation data?” retrieves the relevant code in `src/utils.py` from BrainTumorClassifier. DevPilot searches that project's source; it does not run the classifier.
+
+**Availability:** locally runnable portfolio project. No public live demo is deployed yet. `localhost:8000` works only on the computer running the services.
+
+### What you can do today
+
+- Create an account and sign in through the browser workspace.
+- Import public GitHub repositories and index them in the background.
+- Search code by meaning using the Jina code embedding model and pgvector.
+- Inspect, expand, and copy matching excerpts; follow commit-specific GitHub citations.
+- Reindex a repository after its source changes.
+
+### How it works
+
+```mermaid
+flowchart LR
+    G[Public GitHub repository] --> W[Background indexing worker]
+    W --> C[Code chunks and embeddings]
+    C --> D[(PostgreSQL + pgvector)]
+    U[Browser question] --> A[FastAPI and query embedding]
+    A --> D
+    D --> R[Ranked source excerpts and citations]
+```
+
+**Stack:** Python, FastAPI, SQLAlchemy, Alembic, PostgreSQL, pgvector, Sentence Transformers, vanilla JavaScript/HTML/CSS, and Docker Compose.
+
+**Current limits:** public repositories only; manual reindexing; source retrieval rather than generated answers; no published retrieval accuracy benchmark. Similarity is a ranking signal, not a probability. Hybrid search and conversational answers are future work.
+
+See [the portfolio walkthrough](docs/portfolio.md) and [the public demo deployment plan](docs/hosting-plan.md).
 
 ## Scope
 
@@ -23,9 +60,9 @@ api/  ->  services/  ->  repositories/  ->  Postgres
 - **Routes** parse, authenticate, and delegate. No business logic.
 - **Services** hold the logic. No HTTP, no SQL. This is why `IndexingService` runs unchanged inside the worker process.
 - **Repositories** are the only layer that emits SQL.
-- **Providers** are ports with adapters, so OpenAI can be swapped for HuggingFace, or for a fake in tests, by changing configuration.
+- **Providers** isolate external integrations. The embedding provider has a real Sentence Transformers adapter and a deterministic fake for tests; LLM answer generation is planned.
 
-### Decisions worth knowing
+### Implemented decisions and planned extensions
 
 | Decision | Why |
 | --- | --- |
@@ -33,8 +70,8 @@ api/  ->  services/  ->  repositories/  ->  Postgres
 | Separate worker process | An OOM while embedding a large repo must not take down the API. |
 | HNSW over IVFFlat | IVFFlat needs training data and `lists` retuning as the corpus grows. HNSW builds incrementally — right for continuously arriving repos. |
 | `chunk_embeddings` split from `chunks` | Re-embed with a new model without touching chunk text; keep the ANN index on a narrow table. |
-| Hybrid retrieval (vector + full-text, RRF) | Embeddings miss exact identifiers. Users search for `RATE_LIMIT_BURST`, not "code about rate limits". |
-| Short access JWT + rotating refresh token | Without server-side refresh state, logout does nothing. |
+| Planned: hybrid retrieval (vector + full-text, RRF) | Embeddings miss exact identifiers. Users search for `RATE_LIMIT_BURST`, not "code about rate limits". |
+| Short access JWT; refresh tokens planned | Current access tokens expire after 15 minutes. Browser sign-out clears the local token but does not revoke an already issued token. |
 | Discard the clone after indexing | Persisted working trees grow without bound and buy nothing. |
 
 ## Local setup
@@ -49,7 +86,19 @@ api/  ->  services/  ->  repositories/  ->  Postgres
 
 Ports **8000** (API) and **5432** (Postgres) must be free.
 
-### Run it
+### Run it on Windows (PowerShell)
+
+From your cloned DevPilot folder:
+
+```powershell
+Copy-Item .env.example .env  # First setup only; preserve an existing .env
+docker compose up --build -d --wait
+Start-Process http://localhost:8000/
+```
+
+Create an account in the browser, import a public GitHub repository, index it, and ask a question. The first index/search may take longer while the embedding model downloads and loads. Keep Docker running during use.
+
+### Run it on macOS/Linux
 
 ```bash
 git clone <your-fork-url> devpilot && cd devpilot
@@ -143,6 +192,7 @@ make test-integration
 | GET | `/api/v1/repositories/{id}` | Fetch one of your repositories, including index status. `404` if absent **or** owned by someone else. |
 | POST | `/api/v1/repositories/{id}/index` | Queue indexing. `202` with the job. Idempotent: a queued/running job is returned rather than duplicated. |
 | GET | `/api/v1/repositories/{id}/jobs/{job_id}` | Poll a job's status and progress. |
+| POST | `/api/v1/repositories/{id}/search` | Semantic search over indexed code. `{query, top_k?}` → `200` ranked chunks with path, line span, content, score. `409` if not indexed yet, `404` if not yours. |
 | GET | `/docs` | OpenAPI UI. Disabled when `DEVPILOT_ENVIRONMENT=production`. |
 
 ### Configuration
@@ -207,7 +257,7 @@ README/LICENSE, `.gitignore`, `.env.example`). Kept files are stored with path,
 language, size, and a SHA-256 checksum. Limits (200 MB repo / 5000 files / 1 MB
 per file / 300 s clone) are all configurable.
 
-Public repositories only in M3. Private repos, embeddings, and search come later.
+M4 supports public repositories, embeddings, and semantic search. Private repository support remains out of scope.
 
 Example flow:
 
@@ -223,6 +273,47 @@ TOKEN=$(curl -s -X POST localhost:8000/api/v1/auth/login \
 
 curl localhost:8000/api/v1/auth/me -H "Authorization: Bearer $TOKEN"
 ```
+
+### Semantic search
+
+Once a repository is indexed, its files are split into overlapping line-window
+chunks (40 lines, 10 overlapping, both configurable), each embedded with
+**jinaai/jina-embeddings-v2-base-code** and stored in pgvector. Chunking and
+embedding run inside the existing index job — indexing a repo makes it
+searchable in one step. The unchanged-HEAD short-circuit still applies, and a
+changed file re-chunks and re-embeds only that file.
+
+Search embeds the query with the same model and returns the nearest chunks by
+cosine similarity:
+
+```bash
+curl -X POST localhost:8000/api/v1/repositories/$REPO/search \
+  -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"query": "where are JWT tokens validated", "top_k": 5}'
+```
+
+Each result carries `path`, `start_line`, `end_line`, `content`, and a `score`
+(cosine similarity, higher is closer; not a confidence probability). `top_k` defaults to 10 and is capped
+at 50. A repository with no embeddings yet returns `409` — index it first. This
+milestone returns chunks, not generated answers; answer synthesis is a later
+milestone.
+
+**The embedding dimension is a schema invariant.** Migration 0004 declares the
+vector column as `vector(768)`, so `DEVPILOT_EMBEDDING_DIM` must be 768 for this
+schema version; the app refuses to start otherwise, and the real provider also
+checks the loaded model's width against it. Changing the model to a different
+dimension requires a new migration that alters the column and rebuilds the HNSW
+index — it is not a config-only change.
+
+**First index is slow.** The real model (~322 MB) downloads once on first use
+into `HF_HOME`, a named Docker volume shared by the API and worker; subsequent
+runs reuse it.
+
+**Retrieval evaluation.** `backend/eval/` holds a small harness with
+hand-labeled ground truth that computes recall@k and MRR against a real index.
+It is run manually with the real model, never in CI, and it refuses to emit a
+number without real embeddings — so no metric is fabricated. As of this
+milestone the eval has **not been run**.
 
 ### Troubleshooting
 
@@ -242,13 +333,12 @@ curl localhost:8000/api/v1/auth/me -H "Authorization: Bearer $TOKEN"
 | M1 | Scaffold, config, pgvector migration, health, CI ✅ |
 | M2 | Users, registration, login, JWT access tokens ✅ |
 | M3 | Repository import, durable queue, worker, safe cloning, file discovery ✅ |
-| M4 | Clone, walk, chunk, persist |
-| M5 | Embeddings, HNSW, vector search |
-| M6 | Hybrid retrieval + RRF |
-| M7 | Tree-sitter AST chunking |
-| M8 | Chat, LLM provider port, SSE streaming, citations |
-| M9 | React frontend |
-| M10 | Test hardening, docs |
+| M4 | Chunking, embeddings, pgvector storage, semantic search ✅ |
+| M5 | Hybrid retrieval + RRF |
+| M6 | Tree-sitter AST chunking |
+| M7 | Chat, LLM provider port, SSE streaming, citations |
+| M8 | React frontend |
+| M9 | Test hardening, docs |
 
 ## Testing notes
 
@@ -265,6 +355,11 @@ outages:
 Both behaviours are covered by tests, because they are easy to regress and
 expensive to get wrong.
 
+Automated tests never download the embedding model or touch the network: they
+run with a deterministic fake embedding provider (`DEVPILOT_EMBEDDING_PROVIDER=fake`),
+which makes retrieval assertions exact (a query equal to a chunk retrieves it)
+while staying offline. The real model is exercised by manual browser/API smoke checks and the optional eval harness.
+
 Unit tests stub the database; they are about HTTP behaviour. Integration tests
 use a real Postgres, because a mock cannot tell you that a migration failed to
 apply or that pgvector is missing. CI runs both against a `pgvector/pgvector:pg16`
@@ -272,7 +367,28 @@ service, applies migrations, and verifies they are reversible.
 
 The image is built in three stages. `builder` carries compilers and build
 metadata. `runtime` carries neither and is what deploys — no pytest, no test
-code, 29 packages. `dev` layers the test dependencies and the suite on top of
-`runtime` (46 packages) and is what Compose builds locally. CI builds `runtime`
+code. `dev` layers the test dependencies and the suite on top of
+`runtime` and is what Compose builds locally. CI builds `runtime`
 separately, which is what keeps that separation honest: if a test dependency
 ever leaks into production, that job is where it surfaces.
+
+## Browser workspace
+
+Open http://localhost:8000/ after starting the Docker Compose stack. The browser
+workspace is served by the API itself; no separate frontend server is required.
+
+- Sign in with a DevPilot account or create one in the sign-in dialog.
+- Select an existing repository, or import a public GitHub URL and click Index repository.
+- Ask a natural-language question to retrieve the three most similar source excerpts.
+- Expand or copy code and follow citations to the indexed commit on GitHub.
+- The BrainTumorClassifier demo includes suggested questions for its training and data-loading code.
+
+Authentication is still enforced by the API. Access tokens are kept in the current
+browser tab's session storage and cleared on sign-out. Expired sessions require
+signing in again. Repository contents are rendered as text, including highlighted
+code; retrieved code is never executed by the browser. Similarity scores are ranking
+signals, not confidence probabilities, and results are excerpts rather than generated answers.
+
+The workspace needs the local API and database to be running. Its optional web fonts
+fall back to system fonts when offline. Keep account credentials and local demo
+launchers out of source control.
