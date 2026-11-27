@@ -93,6 +93,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The default "docker" build driver cannot export the GitHub Actions
+      # cache (cache-to: type=gha); Buildx with the docker-container driver can.
+      - uses: docker/setup-buildx-action@v3
+
       # A green test suite and a broken image is a failure mode worth
       # spending two minutes a build to rule out.
       - name: Build image
